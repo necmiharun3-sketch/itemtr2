@@ -5,8 +5,10 @@ import { db, storage } from '../firebase';
 import { doc, updateDoc, getDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { updatePassword } from 'firebase/auth';
+import { httpsCallable } from 'firebase/functions';
 import toast from 'react-hot-toast';
-import { User, Shield, Bell, CreditCard, Camera, Plus, Trash2 } from 'lucide-react';
+import { User, Shield, Bell, CreditCard, Camera, Plus, Trash2, Smartphone, ShieldCheck } from 'lucide-react';
+import { functions } from '../firebase';
 
 export default function Settings() {
   const { user, profile, loading } = useAuth();

@@ -317,6 +317,10 @@ service cloud.firestore {
     // Rules
     // ===============================================================
 
+    match /_connection_test_/{docId} {
+      allow read: if true;
+    }
+
     match /users/{userId} {
       allow read: if true;
       allow create: if isOwner(userId) &&
@@ -353,9 +357,9 @@ service cloud.firestore {
     }
 
     match /products/{productId} {
-      allow get, list: if true;
+      allow read: if true;
       allow create: if (isAuthenticated() && isEmailVerified() && isValidProduct(request.resource.data) && request.resource.data.sellerId == request.auth.uid) || isStaff();
-      allow update: if (isAuthenticated() && resource.data.sellerId == request.auth.uid) || isStaff();
+      allow update: if (isAuthenticated() && resource.data.sellerId == request.auth.uid);
       allow delete: if (isAuthenticated() && resource.data.sellerId == request.auth.uid) || isAdmin();
     }
 
@@ -513,6 +517,24 @@ service cloud.firestore {
     match /supportTicketReplies/{replyId} {
       allow read: if isStaff() || (isAuthenticated() && request.auth.uid == resource.data.actorId);
       allow create: if isStaff() && request.resource.data.keys().hasAll(['ticketId', 'actorId', 'actorRole', 'message', 'createdAt']);
+    }
+
+    match /gifts/{giftId} {
+      allow read: if isAuthenticated() && (request.auth.token.email.lower() == resource.data.toEmail.lower() || resource.data.fromUserId == request.auth.uid);
+      allow create: if isAuthenticated() && request.resource.data.fromUserId == request.auth.uid;
+      allow update: if isAuthenticated() && (resource.data.fromUserId == request.auth.uid || request.auth.token.email.lower() == resource.data.toEmail.lower());
+    }
+
+    match /adminAlerts/{alertId} {
+      allow read: if isStaff();
+      allow create: if true;
+      allow update: if isStaff();
+    }
+
+    match /messages/{messageId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.senderId || request.auth.uid == resource.data.receiverId || isStaff());
+      allow create: if isAuthenticated() && request.resource.data.senderId == request.auth.uid;
+      allow update: if isStaff();
     }
 
     match /adminLogs/{logId} {

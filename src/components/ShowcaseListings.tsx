@@ -4,6 +4,7 @@ import { db } from '../firebase';
 import { collection, query, getDocs, limit } from 'firebase/firestore';
 import SectionHeader from './SectionHeader';
 import { Heart, Clock, ShoppingCart, Rocket } from 'lucide-react';
+import toast from 'react-hot-toast';
 import {
   mapProductDocToHomeListing,
   sortDocPairsNewestFirst,
@@ -44,8 +45,16 @@ export default function ShowcaseListings() {
           data: doc.data() as Record<string, unknown>,
         }));
         mergeRemote(pairs);
-      } catch (e) {
+      } catch (e: any) {
         console.error('ShowcaseListings Error:', e);
+        if (e?.code === 'permission-denied' || e?.message?.includes('Missing or insufficient permissions')) {
+          if (!cancelled) {
+             toast.error('Veritabanı kuralları güncel değil. Lütfen Firestore kurallarını güncelleyin.', { id: 'firestore-rules-error' });
+             setListings([]);
+             setLoadingRemote(false);
+          }
+          return;
+        }
         if (!cancelled && retryCount < maxRetries) {
           retryCount++;
           console.log(`Retrying showcase fetch (${retryCount}/${maxRetries})...`);

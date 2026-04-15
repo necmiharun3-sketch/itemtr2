@@ -48,8 +48,17 @@ export default function NewListings() {
           data: doc.data() as Record<string, unknown>,
         }));
         applyPairs(pairs);
-      } catch (e) {
+      } catch (e: any) {
         console.error('NewListings Error:', e);
+        if (e?.code === 'permission-denied' || e?.message?.includes('Missing or insufficient permissions')) {
+          if (!cancelled) {
+             const raw = getNewListingsFallback();
+             const mapped = raw.map((row) => mapProductDocToHomeListing(String(row.id ?? ''), row));
+             setListings(mapped.slice(0, 40));
+             setLoading(false);
+          }
+          return;
+        }
         if (!cancelled && retryCount < maxRetries) {
           retryCount++;
           setTimeout(run, 2000);

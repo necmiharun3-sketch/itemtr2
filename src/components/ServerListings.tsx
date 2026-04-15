@@ -42,8 +42,15 @@ export default function ServerListings() {
           data: doc.data() as Record<string, unknown>,
         }));
         applyPairs(pairs);
-      } catch (e) {
+      } catch (e: any) {
         console.error('ServerListings Error:', e);
+        if (e?.code === 'permission-denied' || e?.message?.includes('Missing or insufficient permissions')) {
+          if (!cancelled) {
+             setListings([]);
+             setLoading(false);
+          }
+          return;
+        }
         if (!cancelled && retryCount < maxRetries) {
           retryCount++;
           setTimeout(run, 2000);

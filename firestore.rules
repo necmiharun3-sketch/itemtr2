@@ -506,7 +506,7 @@ service cloud.firestore {
     match /notifications/{notificationId} {
       allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
       // Allow users to enqueue their own in-app notifications (no impersonation)
-      allow create: if request.auth != null;
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
       allow update: if isAuthenticated() && request.auth.uid == resource.data.userId && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']);
     }
 
@@ -532,26 +532,37 @@ service cloud.firestore {
     // ===============================================================
 
     match /trade_offers/{offerId} {
-      allow read: if isAuthenticated() && (request.auth.uid == resource.data.senderUserId || request.auth.uid == resource.data.receiverUserId || isAdmin());
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.senderUserId || request.auth.uid == resource.data.receiverUserId || isStaff());
       allow create: if isAuthenticated() && request.resource.data.senderUserId == request.auth.uid;
-      allow update: if isAuthenticated() && (request.auth.uid == resource.data.senderUserId || request.auth.uid == resource.data.receiverUserId || isAdmin());
+      // Client only allowed to update if they are sender/receiver AND only specific fields (like cancelling their own offer)
+      // Most updates should happen via Cloud Functions
+      allow update: if isAuthenticated() && 
+        (request.auth.uid == resource.data.senderUserId || request.auth.uid == resource.data.receiverUserId) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'lastActionBy', 'updatedAt', 'cashPaid', 'cashPaidAt']) &&
+        (request.resource.data.status == 'cancelled' || request.resource.data.status == 'viewed');
     }
 
     match /trade_offer_items/{itemId} {
-      allow read, write: if request.auth != null;
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.resource.data.ownerUserId == request.auth.uid;
+      allow update, delete: if false; // Should not be modified after creation
     }
 
     match /trade_status_history/{historyId} {
-      allow read, write: if request.auth != null;
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.resource.data.changedBy == request.auth.uid;
+      allow update, delete: if false;
     }
 
     match /trade_messages/{messageId} {
-      allow read, write: if request.auth != null;
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.resource.data.senderId == request.auth.uid;
+      allow update, delete: if false;
     }
 
     match /trade_disputes/{disputeId} {
       allow read: if isAuthenticated() && (request.auth.uid == resource.data.senderUserId || request.auth.uid == resource.data.receiverUserId || isStaff());
-      allow create: if isAuthenticated();
+      allow create: if isAuthenticated() && (request.auth.uid == request.resource.data.senderUserId || request.auth.uid == request.resource.data.receiverUserId);
       allow update: if isStaff();
     }
   }

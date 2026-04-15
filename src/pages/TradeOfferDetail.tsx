@@ -129,61 +129,26 @@ export default function TradeOfferDetail() {
         const acceptTradeOfferFn = httpsCallable(functions, 'acceptTradeOffer');
         await acceptTradeOfferFn({ offerId: offer.id });
         
-        // Notify the other party
-        const otherUserId = user.uid === offer.senderUserId ? offer.receiverUserId : offer.senderUserId;
-        await addDoc(collection(db, 'notifications'), {
-          userId: otherUserId,
-          type: 'info',
-          title: 'Takas Teklifi Kabul Edildi!',
-          message: 'Teklifiniz kabul edildi. İlgili ilanlar kilitlendi.',
-          isRead: false,
-          link: `/trade/offers/${offer.id}`,
-          createdAt: serverTimestamp()
-        });
-
         setOffer({ ...offer, status: action });
         toast.success('Teklif kabul edildi.');
         return;
       }
 
-      await updateDoc(offerRef, {
-        status: action,
-        lastActionBy: user.uid,
-        updatedAt: serverTimestamp()
-      });
-
-      await addDoc(collection(db, 'trade_status_history'), {
-        tradeOfferId: offer.id,
-        oldStatus: offer.status,
-        newStatus: action,
-        changedBy: user.uid,
-        createdAt: serverTimestamp()
-      });
-
-      // Notify the other party
-      const otherUserId = user.uid === offer.senderUserId ? offer.receiverUserId : offer.senderUserId;
-      let title = '';
-      let message = '';
       if (action === 'rejected') {
-        title = 'Takas Teklifi Reddedildi';
-        message = 'Takas teklifiniz reddedildi.';
-      } else if (action === 'cancelled') {
-        title = 'Takas Teklifi İptal Edildi';
-        message = 'Karşı taraf takas teklifini iptal etti.';
+        const rejectTradeOfferFn = httpsCallable(functions, 'rejectTradeOffer');
+        await rejectTradeOfferFn({ offerId: offer.id });
+        setOffer({ ...offer, status: action });
+        toast.success('Teklif reddedildi.');
+        return;
       }
 
-      await addDoc(collection(db, 'notifications'), {
-        userId: otherUserId,
-        type: 'info',
-        title,
-        message,
-        isRead: false,
-        link: `/trade/offers/${offer.id}`,
-        createdAt: serverTimestamp()
-      });
-
-      setOffer({ ...offer, status: action });
-      toast.success(`Teklif ${action === 'rejected' ? 'reddedildi' : 'iptal edildi'}.`);
+      if (action === 'cancelled') {
+        const cancelTradeOfferFn = httpsCallable(functions, 'cancelTradeOffer');
+        await cancelTradeOfferFn({ offerId: offer.id });
+        setOffer({ ...offer, status: action });
+        toast.success('Teklif iptal edildi.');
+        return;
+      }
     } catch (error) {
       console.error('Action error:', error);
       toast.error('İşlem gerçekleştirilemedi.');
@@ -230,16 +195,8 @@ export default function TradeOfferDetail() {
       setChatMessage('');
 
       // Notify the other party about the new message
-      const otherUserId = user.uid === offer.senderUserId ? offer.receiverUserId : offer.senderUserId;
-      await addDoc(collection(db, 'notifications'), {
-        userId: otherUserId,
-        type: 'info',
-        title: 'Yeni Takas Mesajı',
-        message: `${user.displayName || 'Kullanıcı'} size bir mesaj gönderdi.`,
-        isRead: false,
-        link: `/trade/offers/${id}`,
-        createdAt: serverTimestamp()
-      });
+      const notifyTradeMessageFn = httpsCallable(functions, 'notifyTradeMessage');
+      await notifyTradeMessageFn({ offerId: id, message: chatMessage.trim() });
     } catch (error) {
       console.error('Error sending message:', error);
       toast.error('Mesaj gönderilemedi.');
@@ -252,35 +209,19 @@ export default function TradeOfferDetail() {
     if (!offer || !user || !isSender) return;
     setActionLoading(true);
     try {
-      if ((profile?.balance || 0) < offer.offeredCashAmount) {
-        toast.error('Yetersiz bakiye. Lütfen bakiye yükleyin.');
-        navigate('/kontrol-merkezi');
-        return;
-      }
-
-      await updateDoc(doc(db, 'users', user.uid), {
-        balance: (profile?.balance || 0) - offer.offeredCashAmount
-      });
-
-      await addDoc(collection(db, 'transactions'), {
-        userId: user.uid,
-        type: 'trade_payment',
-        amount: -offer.offeredCashAmount,
-        status: 'completed',
-        relatedId: offer.id,
-        createdAt: serverTimestamp()
-      });
-
-      await updateDoc(doc(db, 'trade_offers', offer.id), {
-        cashPaid: true,
-        cashPaidAt: serverTimestamp()
-      });
+      const payTradeCashDifferenceFn = httpsCallable(functions, 'payTradeCashDifference');
+      await payTradeCashDifferenceFn({ offerId: offer.id });
 
       setOffer({ ...offer, cashPaid: true });
       toast.success('Nakit fark ödemesi başarıyla yapıldı ve emanete alındı.');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Payment error:', error);
-      toast.error('Ödeme işlemi başarısız.');
+      if (error.message === 'insufficient-balance') {
+        toast.error('Yetersiz bakiye. Lütfen bakiye yükleyin.');
+        navigate('/kontrol-merkezi');
+      } else {
+        toast.error('Ödeme işlemi başarısız.');
+      }
     } finally {
       setActionLoading(false);
     }
@@ -311,16 +252,8 @@ export default function TradeOfferDetail() {
       toast.success('Anlaşmazlık kaydı oluşturuldu. Destek ekibimiz inceleyecektir.');
 
       // Notify the other party about the dispute
-      const otherUserId = user.uid === offer.senderUserId ? offer.receiverUserId : offer.senderUserId;
-      await addDoc(collection(db, 'notifications'), {
-        userId: otherUserId,
-        type: 'warning',
-        title: 'Takas Uyuşmazlığı Bildirildi',
-        message: 'Bu takas için bir uyuşmazlık kaydı oluşturuldu. Destek ekibi inceleyecektir.',
-        isRead: false,
-        link: `/trade/offers/${offer.id}`,
-        createdAt: serverTimestamp()
-      });
+      const notifyTradeDisputeFn = httpsCallable(functions, 'notifyTradeDispute');
+      await notifyTradeDisputeFn({ offerId: offer.id });
     } catch (error) {
       console.error('Dispute error:', error);
       toast.error('Anlaşmazlık kaydı oluşturulamadı.');

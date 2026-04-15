@@ -308,6 +308,18 @@ export const acceptTradeOffer = onCall(async (request) => {
       lockedByTradeId: offerId,
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
+
+    // Send notification to sender
+    const notifRef = db.collection('notifications').doc();
+    tx.set(notifRef, {
+      userId: offer.senderUserId,
+      type: 'info',
+      title: 'Takas Teklifi Kabul Edildi!',
+      message: 'Teklifiniz kabul edildi. İlgili ilanlar kilitlendi.',
+      isRead: false,
+      link: `/trade/offers/${offerId}`,
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
   });
 
   return { ok: true };
@@ -373,6 +385,29 @@ export const completeTradeOffer = onCall(async (request) => {
 
       tx.update(senderProductRef, { status: 'sold' });
       tx.update(receiverProductRef, { status: 'sold' });
+
+      // Notify both parties
+      const notifSenderRef = db.collection('notifications').doc();
+      tx.set(notifSenderRef, {
+        userId: offer.senderUserId,
+        type: 'success',
+        title: 'Takas Tamamlandı!',
+        message: 'Takas işlemi başarıyla tamamlandı.',
+        isRead: false,
+        link: `/trade/offers/${offerId}`,
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      const notifReceiverRef = db.collection('notifications').doc();
+      tx.set(notifReceiverRef, {
+        userId: offer.receiverUserId,
+        type: 'success',
+        title: 'Takas Tamamlandı!',
+        message: 'Takas işlemi başarıyla tamamlandı.',
+        isRead: false,
+        link: `/trade/offers/${offerId}`,
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
+      });
     }
 
     // Log history
@@ -385,6 +420,335 @@ export const completeTradeOffer = onCall(async (request) => {
       note: isSender ? 'Gönderici onayladı' : 'Alıcı onayladı',
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
+  });
+
+  return { ok: true };
+});
+
+export const payTradeCashDifference = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError('unauthenticated', 'Authentication required.');
+  const { offerId } = (request.data || {}) as { offerId?: string };
+  if (!offerId || typeof offerId !== 'string') throw new HttpsError('invalid-argument', 'offerId required');
+
+  await db.runTransaction(async (tx: FirebaseFirestore.Transaction) => {
+    const offerRef = db.collection('trade_offers').doc(offerId);
+    const offerSnap = await tx.get(offerRef);
+    if (!offerSnap.exists) throw new HttpsError('not-found', 'offer not found');
+    const offer = offerSnap.data() as any;
+
+    if (offer.senderUserId !== uid) throw new HttpsError('permission-denied', 'not sender');
+    if (offer.status !== 'accepted') throw new HttpsError('failed-precondition', 'offer not accepted');
+    if (offer.cashPaid) throw new HttpsError('failed-precondition', 'cash already paid');
+    if (!offer.offeredCashAmount || offer.offeredCashAmount <= 0) throw new HttpsError('failed-precondition', 'no cash to pay');
+
+    const userRef = db.collection('users').doc(uid);
+    const userSnap = await tx.get(userRef);
+    if (!userSnap.exists) throw new HttpsError('not-found', 'user not found');
+    const userData = userSnap.data() as any;
+
+    if ((userData.balance || 0) < offer.offeredCashAmount) {
+      throw new HttpsError('failed-precondition', 'insufficient-balance');
+    }
+
+    // Deduct balance
+    tx.update(userRef, {
+      balance: admin.firestore.FieldValue.increment(-offer.offeredCashAmount)
+    });
+
+    // Record transaction
+    const txRef = db.collection('transactions').doc();
+    tx.set(txRef, {
+      userId: uid,
+      type: 'trade_payment',
+      amount: -offer.offeredCashAmount,
+      status: 'completed',
+      relatedId: offerId,
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    // Update offer
+    tx.update(offerRef, {
+      cashPaid: true,
+      cashPaidAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+  });
+
+  return { ok: true };
+});
+
+export const rejectTradeOffer = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError('unauthenticated', 'Authentication required.');
+  const { offerId } = (request.data || {}) as { offerId?: string };
+  if (!offerId || typeof offerId !== 'string') throw new HttpsError('invalid-argument', 'offerId required');
+
+  await db.runTransaction(async (tx: FirebaseFirestore.Transaction) => {
+    const offerRef = db.collection('trade_offers').doc(offerId);
+    const offerSnap = await tx.get(offerRef);
+    if (!offerSnap.exists) throw new HttpsError('not-found', 'offer not found');
+    const offer = offerSnap.data() as any;
+
+    if (offer.receiverUserId !== uid) throw new HttpsError('permission-denied', 'not receiver');
+    if (offer.status !== 'pending' && offer.status !== 'viewed') throw new HttpsError('failed-precondition', 'offer cannot be rejected');
+
+    tx.update(offerRef, {
+      status: 'rejected',
+      lastActionBy: uid,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    const historyRef = db.collection('trade_status_history').doc();
+    tx.set(historyRef, {
+      tradeOfferId: offerId,
+      oldStatus: offer.status,
+      newStatus: 'rejected',
+      changedBy: uid,
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    const notifRef = db.collection('notifications').doc();
+    tx.set(notifRef, {
+      userId: offer.senderUserId,
+      type: 'info',
+      title: 'Takas Teklifi Reddedildi',
+      message: 'Takas teklifiniz reddedildi.',
+      isRead: false,
+      link: `/trade/offers/${offerId}`,
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+  });
+
+  return { ok: true };
+});
+
+export const cancelTradeOffer = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError('unauthenticated', 'Authentication required.');
+  const { offerId } = (request.data || {}) as { offerId?: string };
+  if (!offerId || typeof offerId !== 'string') throw new HttpsError('invalid-argument', 'offerId required');
+
+  await db.runTransaction(async (tx: FirebaseFirestore.Transaction) => {
+    const offerRef = db.collection('trade_offers').doc(offerId);
+    const offerSnap = await tx.get(offerRef);
+    if (!offerSnap.exists) throw new HttpsError('not-found', 'offer not found');
+    const offer = offerSnap.data() as any;
+
+    if (offer.senderUserId !== uid) throw new HttpsError('permission-denied', 'not sender');
+    if (offer.status !== 'pending' && offer.status !== 'viewed') throw new HttpsError('failed-precondition', 'offer cannot be cancelled');
+
+    tx.update(offerRef, {
+      status: 'cancelled',
+      lastActionBy: uid,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    const historyRef = db.collection('trade_status_history').doc();
+    tx.set(historyRef, {
+      tradeOfferId: offerId,
+      oldStatus: offer.status,
+      newStatus: 'cancelled',
+      changedBy: uid,
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    const notifRef = db.collection('notifications').doc();
+    tx.set(notifRef, {
+      userId: offer.receiverUserId,
+      type: 'info',
+      title: 'Takas Teklifi İptal Edildi',
+      message: 'Karşı taraf takas teklifini iptal etti.',
+      isRead: false,
+      link: `/trade/offers/${offerId}`,
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+  });
+
+  return { ok: true };
+});
+
+export const createTradeOffer = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError('unauthenticated', 'Authentication required.');
+  
+  const { targetListingId, offeredListingIds, cashOffer, message, counterOfferId } = request.data;
+  
+  if (!targetListingId) throw new HttpsError('invalid-argument', 'targetListingId required');
+
+  let newOfferId = '';
+
+  await db.runTransaction(async (tx: FirebaseFirestore.Transaction) => {
+    const targetRef = db.collection('products').doc(targetListingId);
+    const targetSnap = await tx.get(targetRef);
+    if (!targetSnap.exists) throw new HttpsError('not-found', 'target listing not found');
+    const target = targetSnap.data() as any;
+
+    if (!target.isTradeAllowed) throw new HttpsError('failed-precondition', 'trade not allowed');
+    if (target.sellerId === uid) throw new HttpsError('failed-precondition', 'cannot trade with self');
+
+    // Check daily limit
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const dailyQ = db.collection('trade_offers')
+      .where('senderUserId', '==', uid)
+      .where('createdAt', '>=', today);
+    const dailySnap = await tx.get(dailyQ);
+    if (dailySnap.size >= 10) throw new HttpsError('resource-exhausted', 'daily limit reached');
+
+    // Check existing
+    const existingQ = db.collection('trade_offers')
+      .where('senderUserId', '==', uid)
+      .where('targetListingId', '==', targetListingId)
+      .where('status', 'in', ['pending', 'viewed']);
+    const existingSnap = await tx.get(existingQ);
+    if (!existingSnap.empty) throw new HttpsError('already-exists', 'active offer exists');
+
+    const offerRef = db.collection('trade_offers').doc();
+    newOfferId = offerRef.id;
+
+    tx.set(offerRef, {
+      targetListingId,
+      senderUserId: uid,
+      receiverUserId: target.sellerId,
+      offeredCashAmount: Number(cashOffer) || 0,
+      requestedCashAmount: 0,
+      message: String(message || '').trim(),
+      status: 'pending',
+      lastActionBy: uid,
+      parentOfferId: counterOfferId || null,
+      expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + 3 * 24 * 60 * 60 * 1000),
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    if (counterOfferId) {
+      const counterRef = db.collection('trade_offers').doc(counterOfferId);
+      tx.update(counterRef, {
+        status: 'countered',
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+      
+      tx.set(db.collection('trade_status_history').doc(), {
+        tradeOfferId: counterOfferId,
+        oldStatus: 'pending',
+        newStatus: 'countered',
+        changedBy: uid,
+        note: 'Karşı teklif oluşturuldu',
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+    }
+
+    // Add target item
+    tx.set(db.collection('trade_offer_items').doc(), {
+      tradeOfferId: newOfferId,
+      listingId: targetListingId,
+      ownerUserId: target.sellerId,
+      declaredValue: target.price || 0,
+      isTarget: true
+    });
+
+    // Add offered items
+    if (Array.isArray(offeredListingIds)) {
+      for (const listingId of offeredListingIds) {
+        const itemRef = db.collection('products').doc(listingId);
+        const itemSnap = await tx.get(itemRef);
+        if (itemSnap.exists) {
+          const item = itemSnap.data() as any;
+          if (item.sellerId === uid) {
+            tx.set(db.collection('trade_offer_items').doc(), {
+              tradeOfferId: newOfferId,
+              listingId,
+              ownerUserId: uid,
+              declaredValue: item.price || 0,
+            });
+          }
+        }
+      }
+    }
+
+    tx.set(db.collection('trade_status_history').doc(), {
+      tradeOfferId: newOfferId,
+      oldStatus: null,
+      newStatus: 'pending',
+      changedBy: uid,
+      note: counterOfferId ? 'Karşı teklif olarak oluşturuldu' : 'Teklif oluşturuldu',
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    tx.set(db.collection('notifications').doc(), {
+      userId: target.sellerId,
+      type: 'info',
+      title: counterOfferId ? 'Yeni Karşı Teklif' : 'Yeni Takas Teklifi',
+      message: counterOfferId 
+        ? `${target.title} ilanınız için bir karşı teklif aldınız.`
+        : `${target.title} ilanınız için yeni bir takas teklifi aldınız.`,
+      isRead: false,
+      link: `/trade/offers/${newOfferId}`,
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+  });
+
+  return { offerId: newOfferId };
+});
+
+export const notifyTradeMessage = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError('unauthenticated', 'Authentication required.');
+  const { offerId, message } = request.data;
+  if (!offerId) throw new HttpsError('invalid-argument', 'offerId required');
+
+  const offerRef = db.collection('trade_offers').doc(offerId);
+  const offerSnap = await offerRef.get();
+  if (!offerSnap.exists) throw new HttpsError('not-found', 'offer not found');
+  const offer = offerSnap.data() as any;
+
+  if (offer.senderUserId !== uid && offer.receiverUserId !== uid) {
+    throw new HttpsError('permission-denied', 'not participant');
+  }
+
+  const otherUserId = uid === offer.senderUserId ? offer.receiverUserId : offer.senderUserId;
+  const userRef = db.collection('users').doc(uid);
+  const userSnap = await userRef.get();
+  const userData = userSnap.data() as any;
+
+  await db.collection('notifications').add({
+    userId: otherUserId,
+    type: 'info',
+    title: 'Yeni Takas Mesajı',
+    message: `${userData?.username || 'Kullanıcı'} size bir mesaj gönderdi.`,
+    isRead: false,
+    link: `/trade/offers/${offerId}`,
+    createdAt: admin.firestore.FieldValue.serverTimestamp()
+  });
+
+  return { ok: true };
+});
+
+export const notifyTradeDispute = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError('unauthenticated', 'Authentication required.');
+  const { offerId } = request.data;
+  if (!offerId) throw new HttpsError('invalid-argument', 'offerId required');
+
+  const offerRef = db.collection('trade_offers').doc(offerId);
+  const offerSnap = await offerRef.get();
+  if (!offerSnap.exists) throw new HttpsError('not-found', 'offer not found');
+  const offer = offerSnap.data() as any;
+
+  if (offer.senderUserId !== uid && offer.receiverUserId !== uid) {
+    throw new HttpsError('permission-denied', 'not participant');
+  }
+
+  const otherUserId = uid === offer.senderUserId ? offer.receiverUserId : offer.senderUserId;
+
+  await db.collection('notifications').add({
+    userId: otherUserId,
+    type: 'warning',
+    title: 'Takas Uyuşmazlığı Bildirildi',
+    message: 'Bu takas için bir uyuşmazlık kaydı oluşturuldu. Destek ekibi inceleyecektir.',
+    isRead: false,
+    link: `/trade/offers/${offerId}`,
+    createdAt: admin.firestore.FieldValue.serverTimestamp()
   });
 
   return { ok: true };

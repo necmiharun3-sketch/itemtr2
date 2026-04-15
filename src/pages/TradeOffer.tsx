@@ -3,6 +3,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
 import { doc, getDoc, collection, query, where, getDocs, addDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
+import { functions } from '../firebase';
 import toast from 'react-hot-toast';
 import { ArrowRightLeft, Plus, X, Search, AlertTriangle, Check } from 'lucide-react';
 
@@ -117,117 +119,29 @@ export default function TradeOffer() {
 
     setSubmitting(true);
     try {
-      // Spam protection: check daily limit (10 offers)
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      
-      const dailyQ = query(
-        collection(db, 'trade_offers'),
-        where('senderUserId', '==', user?.uid),
-        where('createdAt', '>=', today)
-      );
-      const dailySnap = await getDocs(dailyQ);
-      if (dailySnap.size >= 10) {
-        toast.error('Günlük takas teklifi sınırına (10) ulaştınız. Lütfen yarın tekrar deneyin.');
-        setSubmitting(false);
-        return;
-      }
-
-      // Check if already offered for this listing
-      const existingQ = query(
-        collection(db, 'trade_offers'),
-        where('senderUserId', '==', user?.uid),
-        where('targetListingId', '==', targetListing.id),
-        where('status', 'in', ['pending', 'viewed'])
-      );
-      const existingSnap = await getDocs(existingQ);
-      if (!existingSnap.empty) {
-        toast.error('Bu ilan için zaten aktif bir teklifiniz bulunuyor.');
-        setSubmitting(false);
-        return;
-      }
-
-      const offerData = {
+      const createTradeOfferFn = httpsCallable(functions, 'createTradeOffer');
+      const result = await createTradeOfferFn({
         targetListingId: targetListing.id,
-        senderUserId: user?.uid,
-        receiverUserId: targetListing.sellerId,
-        offeredCashAmount: Number(cashOffer) || 0,
-        requestedCashAmount: 0,
+        offeredListingIds: selectedListings.map(l => l.id),
+        cashOffer: Number(cashOffer) || 0,
         message: message.trim(),
-        status: 'pending',
-        lastActionBy: user?.uid,
-        parentOfferId: counterOfferId || null,
-        expiresAt: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000), // 3 days
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      };
-
-      const offerRef = await addDoc(collection(db, 'trade_offers'), offerData);
-
-      // If counter offer, update parent
-      if (counterOfferId) {
-        await updateDoc(doc(db, 'trade_offers', counterOfferId), {
-          status: 'countered',
-          updatedAt: serverTimestamp()
-        });
-        
-        await addDoc(collection(db, 'trade_status_history'), {
-          tradeOfferId: counterOfferId,
-          oldStatus: 'pending',
-          newStatus: 'countered',
-          changedBy: user?.uid,
-          note: 'Karşı teklif oluşturuldu',
-          createdAt: serverTimestamp()
-        });
-      }
-
-      // Add items
-      for (const item of selectedListings) {
-        await addDoc(collection(db, 'trade_offer_items'), {
-          tradeOfferId: offerRef.id,
-          listingId: item.id,
-          ownerUserId: user?.uid,
-          declaredValue: item.price || 0,
-        });
-      }
-
-      // Add target item to trade_offer_items as well for easy reference
-      await addDoc(collection(db, 'trade_offer_items'), {
-        tradeOfferId: offerRef.id,
-        listingId: targetListing.id,
-        ownerUserId: targetListing.sellerId,
-        declaredValue: targetListing.price || 0,
-        isTarget: true
+        counterOfferId: counterOfferId || null
       });
 
-      // Add status history
-      await addDoc(collection(db, 'trade_status_history'), {
-        tradeOfferId: offerRef.id,
-        oldStatus: null,
-        newStatus: 'pending',
-        changedBy: user?.uid,
-        note: counterOfferId ? 'Karşı teklif olarak oluşturuldu' : 'Teklif oluşturuldu',
-        createdAt: serverTimestamp()
-      });
-
-      // Send notification
-      await addDoc(collection(db, 'notifications'), {
-        userId: targetListing.sellerId,
-        type: 'info',
-        title: counterOfferId ? 'Yeni Karşı Teklif' : 'Yeni Takas Teklifi',
-        message: counterOfferId 
-          ? `${targetListing.title} ilanınız için bir karşı teklif aldınız.`
-          : `${targetListing.title} ilanınız için yeni bir takas teklifi aldınız.`,
-        isRead: false,
-        link: `/trade/offers/${offerRef.id}`,
-        createdAt: serverTimestamp()
-      });
+      const data = result.data as any;
+      const offerId = data.offerId;
 
       toast.success(counterOfferId ? 'Karşı teklifiniz gönderildi!' : 'Takas teklifiniz başarıyla gönderildi!');
-      navigate(`/trade/offers/${offerRef.id}`);
-    } catch (error) {
+      navigate(`/trade/offers/${offerId}`);
+    } catch (error: any) {
       console.error('Error submitting trade offer:', error);
-      toast.error('Teklif gönderilirken bir hata oluştu.');
+      if (error.message === 'daily limit reached') {
+        toast.error('Günlük takas teklifi sınırına (10) ulaştınız. Lütfen yarın tekrar deneyin.');
+      } else if (error.message === 'active offer exists') {
+        toast.error('Bu ilan için zaten aktif bir teklifiniz bulunuyor.');
+      } else {
+        toast.error('Teklif gönderilirken bir hata oluştu.');
+      }
     } finally {
       setSubmitting(false);
     }

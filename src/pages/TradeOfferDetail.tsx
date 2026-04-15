@@ -3,6 +3,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
 import { doc, getDoc, updateDoc, collection, query, where, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
+import { functions } from '../firebase';
 import toast from 'react-hot-toast';
 import { ArrowRightLeft, Check, X, MessageSquare, AlertTriangle, Clock, ShieldCheck } from 'lucide-react';
 import SEOHead from '../components/SEOHead';
@@ -100,70 +102,47 @@ export default function TradeOfferDetail() {
       const offerRef = doc(db, 'trade_offers', offer.id);
       
       if (action === 'completed') {
+        const completeTradeOfferFn = httpsCallable(functions, 'completeTradeOffer');
+        await completeTradeOfferFn({ offerId: offer.id });
+
+        // Optimistically update UI
         const isSender = user.uid === offer.senderUserId;
         const update: any = {};
         if (isSender) update.senderConfirmed = true;
         else update.receiverConfirmed = true;
 
-        await updateDoc(offerRef, {
-          ...update,
-          updatedAt: serverTimestamp()
-        });
+        const senderConfirmed = isSender ? true : offer.senderConfirmed;
+        const receiverConfirmed = !isSender ? true : offer.receiverConfirmed;
 
-        // Check if both confirmed
-        const updatedSnap = await getDoc(offerRef);
-        const updatedData = updatedSnap.data();
-        if (updatedData?.senderConfirmed && updatedData?.receiverConfirmed) {
-          await updateDoc(offerRef, {
-            status: 'completed',
-            completedAt: serverTimestamp()
-          });
-
-          // Release cash if any
-          if (offer.offeredCashAmount > 0) {
-            const receiverRef = doc(db, 'users', offer.receiverUserId);
-            const receiverSnap = await getDoc(receiverRef);
-            if (receiverSnap.exists()) {
-              const receiverData = receiverSnap.data();
-              await updateDoc(receiverRef, {
-                balance: (receiverData.balance || 0) + offer.offeredCashAmount
-              });
-              
-              await addDoc(collection(db, 'transactions'), {
-                userId: offer.receiverUserId,
-                type: 'trade_income',
-                amount: offer.offeredCashAmount,
-                status: 'completed',
-                relatedId: offer.id,
-                createdAt: serverTimestamp()
-              });
-            }
-          }
-
-          // Mark items as sold
-          const listingsToMark = [targetItem.id, ...offeredItems.map(i => i.id)];
-          for (const listingId of listingsToMark) {
-            await updateDoc(doc(db, 'products', listingId), {
-              status: 'sold'
-            });
-          }
-
+        if (senderConfirmed && receiverConfirmed) {
           toast.success('Takas başarıyla tamamlandı!');
           setOffer({ ...offer, ...update, status: 'completed' });
         } else {
           toast.success('Teslimat onayınız kaydedildi. Karşı tarafın onayı bekleniyor.');
           setOffer({ ...offer, ...update });
         }
+        return;
+      }
 
-        await addDoc(collection(db, 'trade_status_history'), {
-          tradeOfferId: offer.id,
-          oldStatus: offer.status,
-          newStatus: updatedData?.senderConfirmed && updatedData?.receiverConfirmed ? 'completed' : offer.status,
-          changedBy: user.uid,
-          note: isSender ? 'Gönderici onayladı' : 'Alıcı onayladı',
+      // If accepted, use Cloud Function
+      if (action === 'accepted') {
+        const acceptTradeOfferFn = httpsCallable(functions, 'acceptTradeOffer');
+        await acceptTradeOfferFn({ offerId: offer.id });
+        
+        // Notify the other party
+        const otherUserId = user.uid === offer.senderUserId ? offer.receiverUserId : offer.senderUserId;
+        await addDoc(collection(db, 'notifications'), {
+          userId: otherUserId,
+          type: 'info',
+          title: 'Takas Teklifi Kabul Edildi!',
+          message: 'Teklifiniz kabul edildi. İlgili ilanlar kilitlendi.',
+          isRead: false,
+          link: `/trade/offers/${offer.id}`,
           createdAt: serverTimestamp()
         });
 
+        setOffer({ ...offer, status: action });
+        toast.success('Teklif kabul edildi.');
         return;
       }
 
@@ -181,25 +160,11 @@ export default function TradeOfferDetail() {
         createdAt: serverTimestamp()
       });
 
-      // If accepted, lock listings
-      if (action === 'accepted') {
-        const listingsToLock = [targetItem.id, ...offeredItems.map(i => i.id)];
-        for (const listingId of listingsToLock) {
-          await updateDoc(doc(db, 'products', listingId), {
-            status: 'locked',
-            lockedByTradeId: offer.id
-          });
-        }
-      }
-
       // Notify the other party
       const otherUserId = user.uid === offer.senderUserId ? offer.receiverUserId : offer.senderUserId;
       let title = '';
       let message = '';
-      if (action === 'accepted') {
-        title = 'Takas Teklifi Kabul Edildi!';
-        message = 'Teklifiniz kabul edildi. İlgili ilanlar kilitlendi.';
-      } else if (action === 'rejected') {
+      if (action === 'rejected') {
         title = 'Takas Teklifi Reddedildi';
         message = 'Takas teklifiniz reddedildi.';
       } else if (action === 'cancelled') {
@@ -218,7 +183,7 @@ export default function TradeOfferDetail() {
       });
 
       setOffer({ ...offer, status: action });
-      toast.success(`Teklif ${action === 'accepted' ? 'kabul edildi' : action === 'rejected' ? 'reddedildi' : 'iptal edildi'}.`);
+      toast.success(`Teklif ${action === 'rejected' ? 'reddedildi' : 'iptal edildi'}.`);
     } catch (error) {
       console.error('Action error:', error);
       toast.error('İşlem gerçekleştirilemedi.');

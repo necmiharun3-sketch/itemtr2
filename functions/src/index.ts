@@ -260,6 +260,137 @@ export const markDelivered = onCall(async (request) => {
 });
 
 // -----------------------------------------------------------------------------
+// Trade System Actions
+// -----------------------------------------------------------------------------
+export const acceptTradeOffer = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError('unauthenticated', 'Authentication required.');
+  const { offerId } = (request.data || {}) as { offerId?: string };
+  if (!offerId || typeof offerId !== 'string') throw new HttpsError('invalid-argument', 'offerId required');
+
+  await db.runTransaction(async (tx: FirebaseFirestore.Transaction) => {
+    const offerRef = db.collection('trade_offers').doc(offerId);
+    const offerSnap = await tx.get(offerRef);
+    if (!offerSnap.exists) throw new HttpsError('not-found', 'offer not found');
+    const offer = offerSnap.data() as any;
+
+    if (offer.receiverUserId !== uid) throw new HttpsError('permission-denied', 'not receiver');
+    if (offer.status !== 'pending') throw new HttpsError('failed-precondition', 'offer not pending');
+
+    // Update offer status
+    tx.update(offerRef, {
+      status: 'accepted',
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    // Log history
+    const historyRef = db.collection('trade_status_history').doc();
+    tx.set(historyRef, {
+      offerId,
+      oldStatus: 'pending',
+      newStatus: 'accepted',
+      changedBy: uid,
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    // Lock both products
+    const senderProductRef = db.collection('products').doc(offer.senderProductId);
+    const receiverProductRef = db.collection('products').doc(offer.receiverProductId);
+
+    tx.update(senderProductRef, {
+      status: 'locked',
+      lockedByTradeId: offerId,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    tx.update(receiverProductRef, {
+      status: 'locked',
+      lockedByTradeId: offerId,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+  });
+
+  return { ok: true };
+});
+
+export const completeTradeOffer = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError('unauthenticated', 'Authentication required.');
+  const { offerId } = (request.data || {}) as { offerId?: string };
+  if (!offerId || typeof offerId !== 'string') throw new HttpsError('invalid-argument', 'offerId required');
+
+  await db.runTransaction(async (tx: FirebaseFirestore.Transaction) => {
+    const offerRef = db.collection('trade_offers').doc(offerId);
+    const offerSnap = await tx.get(offerRef);
+    if (!offerSnap.exists) throw new HttpsError('not-found', 'offer not found');
+    const offer = offerSnap.data() as any;
+
+    const isSender = uid === offer.senderUserId;
+    const isReceiver = uid === offer.receiverUserId;
+    if (!isSender && !isReceiver) throw new HttpsError('permission-denied', 'not participant');
+    if (offer.status !== 'accepted') throw new HttpsError('failed-precondition', 'offer not accepted');
+
+    const update: any = {};
+    if (isSender) update.senderConfirmed = true;
+    else update.receiverConfirmed = true;
+
+    tx.update(offerRef, {
+      ...update,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    // Check if this action makes both confirmed
+    const senderConfirmed = isSender ? true : offer.senderConfirmed;
+    const receiverConfirmed = isReceiver ? true : offer.receiverConfirmed;
+
+    if (senderConfirmed && receiverConfirmed) {
+      tx.update(offerRef, {
+        status: 'completed',
+        completedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      // Release cash if any
+      if (offer.offeredCashAmount > 0) {
+        const receiverRef = db.collection('users').doc(offer.receiverUserId);
+        tx.update(receiverRef, {
+          balance: admin.firestore.FieldValue.increment(offer.offeredCashAmount)
+        });
+        
+        const txRef = db.collection('transactions').doc();
+        tx.set(txRef, {
+          userId: offer.receiverUserId,
+          type: 'trade_income',
+          amount: offer.offeredCashAmount,
+          status: 'completed',
+          relatedId: offerId,
+          createdAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+      }
+
+      // Mark items as sold
+      const senderProductRef = db.collection('products').doc(offer.senderProductId);
+      const receiverProductRef = db.collection('products').doc(offer.receiverProductId);
+
+      tx.update(senderProductRef, { status: 'sold' });
+      tx.update(receiverProductRef, { status: 'sold' });
+    }
+
+    // Log history
+    const historyRef = db.collection('trade_status_history').doc();
+    tx.set(historyRef, {
+      tradeOfferId: offerId,
+      oldStatus: offer.status,
+      newStatus: (senderConfirmed && receiverConfirmed) ? 'completed' : offer.status,
+      changedBy: uid,
+      note: isSender ? 'Gönderici onayladı' : 'Alıcı onayladı',
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+  });
+
+  return { ok: true };
+});
+
+// -----------------------------------------------------------------------------
 // SMS OTP (mock): provider erişimi gelene kadar emulator-friendly
 // -----------------------------------------------------------------------------
 export const smsSend = onCall(async (request) => {

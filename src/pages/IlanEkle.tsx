@@ -281,8 +281,6 @@ export default function IlanEkle() {
       toast.error('İlan eklemek için giriş yapmalısınız.');
       return;
     }
-    // TEST İÇİN GEÇİCİ OLARAK KAPATILDI
-    /*
     if (!user.emailVerified) {
       toast.error('İlan eklemek için e-posta doğrulaması zorunludur.');
       return;
@@ -295,7 +293,6 @@ export default function IlanEkle() {
       toast.error('İlan eklemek için KYC doğrulaması zorunludur.');
       return;
     }
-    */
 
     if (!isFormValid) {
       toast.error('Lütfen tüm alanları geçerli şekilde doldurun.');

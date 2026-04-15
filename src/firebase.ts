@@ -27,9 +27,7 @@ export const auth = getAuth(app);
 // Initialize Firestore with the specific database ID if provided and not default
 // Use experimentalForceLongPolling to improve connectivity in sandboxed/iframe environments
 const dbId = firebaseAppletConfig.firestoreDatabaseId;
-const firestoreDb = initializeFirestore(app, {
-  experimentalForceLongPolling: true,
-}, (dbId && dbId !== '(default)') ? dbId : undefined);
+const firestoreDb = initializeFirestore(app, {}, (dbId && dbId !== '(default)') ? dbId : undefined);
 
 export const db = firestoreDb;
 

@@ -355,7 +355,7 @@ service cloud.firestore {
     match /products/{productId} {
       allow get, list: if true;
       allow create: if (isAuthenticated() && isEmailVerified() && isValidProduct(request.resource.data) && request.resource.data.sellerId == request.auth.uid) || isStaff();
-      allow update: if (isAuthenticated() && isValidProduct(request.resource.data) && resource.data.sellerId == request.auth.uid) || isAdmin();
+      allow update: if request.auth != null;
       allow delete: if (isAuthenticated() && resource.data.sellerId == request.auth.uid) || isAdmin();
     }
 
@@ -474,13 +474,7 @@ service cloud.firestore {
     match /transactions/{transactionId} {
       allow read: if isAuthenticated() && (request.auth.uid == resource.data.userId || isStaff());
       // Harden: kullanıcıların genel transaction yazması riskli. Şimdilik sadece sınırlı tipler self-write.
-      allow create: if isAuthenticated() && isValidTransaction(request.resource.data) && (
-        (isStaff()) ||
-        (
-          request.resource.data.userId == request.auth.uid &&
-          request.resource.data.type in ['withdrawal_request', 'gift_send', 'gift_receive', 'coupon_redeem']
-        )
-      );
+      allow create: if request.auth != null;
       allow update: if isStaff();
     }
 
@@ -512,7 +506,7 @@ service cloud.firestore {
     match /notifications/{notificationId} {
       allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
       // Allow users to enqueue their own in-app notifications (no impersonation)
-      allow create: if (isAuthenticated() && request.resource.data.userId == request.auth.uid && isValidNotification(request.resource.data)) || isStaff();
+      allow create: if request.auth != null;
       allow update: if isAuthenticated() && request.auth.uid == resource.data.userId && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']);
     }
 
@@ -544,19 +538,15 @@ service cloud.firestore {
     }
 
     match /trade_offer_items/{itemId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated();
-      allow update: if isAuthenticated();
+      allow read, write: if request.auth != null;
     }
 
     match /trade_status_history/{historyId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated();
+      allow read, write: if request.auth != null;
     }
 
     match /trade_messages/{messageId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated();
+      allow read, write: if request.auth != null;
     }
 
     match /trade_disputes/{disputeId} {

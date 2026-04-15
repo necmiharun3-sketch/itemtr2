@@ -13,7 +13,7 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import toast from 'react-hot-toast';
 
 export default function Dashboard() {
-  const { user, profile, loading } = useAuth();
+  const { user, profile, loading, logout } = useAuth();
   const [stats, setStats] = useState({
     activeListings: 0,
     soldOrders: 0,
@@ -435,10 +435,9 @@ export default function Dashboard() {
                 { to: '/bildirimler', label: 'Bildirimler', icon: Bell },
                 { to: '/destek-sistemi', label: 'Destek', icon: Shield },
                 { to: '/favorilerim', label: 'Favoriler', icon: Star },
-                { to: '/mesajlar', label: 'Mesajlar', icon: MessageSquare },
+                { to: '/mesajlarim', label: 'Mesajlar', icon: MessageSquare },
                 { to: '/hakkimizda', label: 'Hakkımızda', icon: FileText },
                 { to: '/sss', label: 'SSS', icon: HelpCircle },
-                { to: '/', label: 'Çıkış', icon: LogOut },
               ].map((item) => (
                 <Link
                   key={item.to}
@@ -449,6 +448,13 @@ export default function Dashboard() {
                   <span className="text-sm text-gray-300">{item.label}</span>
                 </Link>
               ))}
+              <button
+                onClick={logout}
+                className="flex items-center gap-2 p-3 rounded-lg bg-[#111218] hover:bg-white/5 transition-colors w-full text-left"
+              >
+                <LogOut className="w-4 h-4 text-gray-400" />
+                <span className="text-sm text-gray-300">Çıkış</span>
+              </button>
             </div>
           </div>
         </div>

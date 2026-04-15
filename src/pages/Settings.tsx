@@ -188,6 +188,67 @@ export default function Settings() {
     }
   };
 
+  const handleVerifySms = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!securityData.newPassword || securityData.newPassword.length !== 6) {
+      toast.error('Lütfen 6 haneli doğrulama kodunu girin.');
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const verify = httpsCallable(functions, 'smsVerify');
+      await verify({ phone: formData.phone, code: securityData.newPassword });
+      toast.success('Telefon numaranız doğrulandı!');
+      setSecurityData({ newPassword: '', confirmPassword: '' });
+    } catch (error: any) {
+      console.error('SMS verification error:', error);
+      toast.error('Doğrulama kodu hatalı veya süresi dolmuş.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleSendSms = async () => {
+    if (!formData.phone) {
+      toast.error('Lütfen önce telefon numaranızı kaydedin.');
+      return;
+    }
+    setIsSaving(true);
+    try {
+      const send = httpsCallable(functions, 'smsSend');
+      const resp = await send({ phone: formData.phone });
+      const devCode = (resp.data as any)?.devCode as string | null;
+      if (devCode) {
+        toast.success(`[DEV MODE] Doğrulama kodu: ${devCode}`);
+      } else {
+        toast.success('Doğrulama kodu gönderildi.');
+      }
+    } catch (error) {
+      console.error('SMS send error:', error);
+      toast.error('Kod gönderilemedi.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleKycApply = async () => {
+    if (!user) return;
+    setIsSaving(true);
+    try {
+      await updateDoc(doc(db, 'users', user.uid), {
+        kycStatus: 'pending',
+        kycReferenceId: `KYC-${Date.now()}`
+      });
+      toast.success('KYC başvurunuz alındı. Admin onayı bekleniyor.');
+    } catch (error) {
+      console.error('KYC apply error:', error);
+      toast.error('Başvuru yapılamadı.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   if (loading) return <div className="text-center py-20 text-white">Yükleniyor...</div>;
   if (!user) return <Navigate to="/login" />;
 
@@ -371,6 +432,92 @@ export default function Settings() {
                   {isSaving ? 'Güncelleniyor...' : 'Şifreyi Güncelle'}
                 </button>
               </form>
+
+              <div className="mt-12 space-y-8">
+                {/* SMS Verification Section */}
+                <div className="bg-[#111218] rounded-2xl p-6 border border-white/5">
+                  <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                    <Smartphone className="w-5 h-5 text-[#ff6a00]" />
+                    Telefon Doğrulama
+                  </h3>
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between p-4 bg-black/20 rounded-xl border border-white/5">
+                      <div>
+                        <p className="text-sm font-medium text-white">Durum</p>
+                        <p className={`text-xs ${profile?.smsVerified ? 'text-green-400' : 'text-red-400'}`}>
+                          {profile?.smsVerified ? 'Doğrulandı' : 'Doğrulanmadı'}
+                        </p>
+                      </div>
+                      {!profile?.smsVerified && (
+                        <button
+                          onClick={handleSendSms}
+                          disabled={isSaving}
+                          className="px-4 py-2 bg-[#ff6a00] text-white text-xs font-bold rounded-lg hover:bg-[#ff8533] transition-colors disabled:opacity-50"
+                        >
+                          Kod Gönder
+                        </button>
+                      )}
+                    </div>
+                    
+                    {!profile?.smsVerified && (
+                      <form onSubmit={handleVerifySms} className="flex gap-2">
+                        <input
+                          type="text"
+                          maxLength={6}
+                          placeholder="6 Haneli Kod"
+                          value={securityData.newPassword}
+                          onChange={(e) => setSecurityData(prev => ({ ...prev, newPassword: e.target.value.replace(/\D/g, '') }))}
+                          className="flex-1 bg-black/30 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-[#ff6a00]"
+                        />
+                        <button
+                          type="submit"
+                          disabled={isSaving || securityData.newPassword.length !== 6}
+                          className="px-6 py-2 bg-white/10 text-white text-sm font-bold rounded-xl hover:bg-white/20 transition-colors disabled:opacity-50"
+                        >
+                          Doğrula
+                        </button>
+                      </form>
+                    )}
+                  </div>
+                </div>
+
+                {/* KYC Verification Section */}
+                <div className="bg-[#111218] rounded-2xl p-6 border border-white/5">
+                  <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                    <ShieldCheck className="w-5 h-5 text-[#5b68f6]" />
+                    Kimlik Doğrulama (KYC)
+                  </h3>
+                  <div className="p-4 bg-black/20 rounded-xl border border-white/5">
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        <p className="text-sm font-medium text-white">Durum</p>
+                        <p className={`text-xs ${
+                          profile?.kycStatus === 'verified' ? 'text-green-400' :
+                          profile?.kycStatus === 'pending' ? 'text-yellow-400' :
+                          profile?.kycStatus === 'rejected' ? 'text-red-400' : 'text-gray-400'
+                        }`}>
+                          {profile?.kycStatus === 'verified' ? 'Doğrulandı' :
+                           profile?.kycStatus === 'pending' ? 'Beklemede' :
+                           profile?.kycStatus === 'rejected' ? 'Reddedildi' : 'Başlatılmadı'}
+                        </p>
+                      </div>
+                      {(!profile?.kycStatus || profile?.kycStatus === 'none' || profile?.kycStatus === 'rejected') && (
+                        <button
+                          onClick={handleKycApply}
+                          disabled={isSaving}
+                          className="px-4 py-2 bg-[#5b68f6] text-white text-xs font-bold rounded-lg hover:bg-[#6c79ff] transition-colors disabled:opacity-50"
+                        >
+                          Doğrulama Başlat
+                        </button>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-500 leading-relaxed">
+                      Hesabınızın güvenliği ve yüksek limitli işlemler için kimlik doğrulaması gereklidir. 
+                      Başvurunuz admin ekibimiz tarafından incelenecektir.
+                    </p>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 

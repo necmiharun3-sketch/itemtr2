@@ -374,7 +374,7 @@ export const acceptTradeOffer = onCall(async (request) => {
       throw new HttpsError("failed-precondition", "Target listingId missing.");
     }
 
-    const targetListingRef = db.collection("listings").doc(targetListingId);
+    const targetListingRef = db.collection("products").doc(targetListingId);
     const targetListingSnap = await tx.get(targetListingRef);
 
     if (!targetListingSnap.exists) {
@@ -392,7 +392,7 @@ export const acceptTradeOffer = onCall(async (request) => {
     }
 
     const offeredListingRefs = offeredItems.map((item) =>
-      db.collection("listings").doc(String(item.listingId))
+      db.collection("products").doc(String(item.listingId))
     );
 
     const offeredListingSnaps = await Promise.all(
@@ -428,7 +428,7 @@ export const acceptTradeOffer = onCall(async (request) => {
     });
 
     tx.set(db.collection("trade_status_history").doc(), {
-      offerId,
+      tradeOfferId: offerId,
       oldStatus: "pending",
       newStatus: "accepted",
       changedBy: uid,
@@ -511,7 +511,7 @@ export const completeTradeOffer = onCall(async (request) => {
       throw new HttpsError("failed-precondition", "No listing ids found.");
     }
 
-    const listingRefs = listingIds.map((id) => db.collection("listings").doc(id));
+    const listingRefs = listingIds.map((id) => db.collection("products").doc(id));
     const listingSnaps = await Promise.all(listingRefs.map((ref) => tx.get(ref)));
 
     listingSnaps.forEach((snap, i) => {
@@ -527,7 +527,7 @@ export const completeTradeOffer = onCall(async (request) => {
     });
 
     tx.set(db.collection("trade_status_history").doc(), {
-      offerId,
+      tradeOfferId: offerId,
       oldStatus: "accepted",
       newStatus: "completed",
       changedBy: uid,
@@ -747,6 +747,12 @@ export const createTradeOffer = onCall(async (request) => {
       throw new HttpsError("failed-precondition", "trade not allowed");
     if (target.sellerId === uid)
       throw new HttpsError("failed-precondition", "cannot trade with self");
+    if (!target.acceptsCashDifference && Number(cashOffer || 0) > 0) {
+      throw new HttpsError(
+        "failed-precondition",
+        "target listing does not accept cash difference",
+      );
+    }
 
     // Check daily limit
     const today = new Date();
@@ -832,6 +838,10 @@ export const createTradeOffer = onCall(async (request) => {
           }
         }
       }
+    }
+
+    if ((!Array.isArray(offeredListingIds) || offeredListingIds.length === 0) && Number(cashOffer || 0) <= 0) {
+      throw new HttpsError("failed-precondition", "Trade must include item or cash.");
     }
 
     tx.set(db.collection("trade_status_history").doc(), {

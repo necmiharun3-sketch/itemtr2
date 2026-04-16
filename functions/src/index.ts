@@ -316,31 +316,118 @@ export const markDelivered = onCall(async (request) => {
 // -----------------------------------------------------------------------------
 export const acceptTradeOffer = onCall(async (request) => {
   const uid = request.auth?.uid;
-  if (!uid) throw new HttpsError("unauthenticated", "Authentication required.");
-  const { offerId } = (request.data || {}) as { offerId?: string };
-  if (!offerId || typeof offerId !== "string")
-    throw new HttpsError("invalid-argument", "offerId required");
+  if (!uid) {
+    throw new HttpsError("unauthenticated", "Authentication required.");
+  }
 
-  await db.runTransaction(async (tx: FirebaseFirestore.Transaction) => {
-    const offerRef = db.collection("trade_offers").doc(offerId);
+  const { offerId } = request.data as { offerId?: string };
+  if (!offerId) {
+    throw new HttpsError("invalid-argument", "offerId is required.");
+  }
+
+  const offerRef = db.collection("trade_offers").doc(offerId);
+
+  await db.runTransaction(async (tx) => {
     const offerSnap = await tx.get(offerRef);
-    if (!offerSnap.exists) throw new HttpsError("not-found", "offer not found");
+    if (!offerSnap.exists) {
+      throw new HttpsError("not-found", "Trade offer not found.");
+    }
+
     const offer = offerSnap.data() as any;
 
-    if (offer.receiverUserId !== uid)
-      throw new HttpsError("permission-denied", "not receiver");
-    if (offer.status !== "pending")
-      throw new HttpsError("failed-precondition", "offer not pending");
+    if (offer.receiverUserId !== uid) {
+      throw new HttpsError("permission-denied", "Only the receiver can accept this offer.");
+    }
 
-    // Update offer status
+    if (offer.status !== "pending") {
+      throw new HttpsError("failed-precondition", "Only pending offers can be accepted.");
+    }
+
+    const itemsQuery = db
+      .collection("trade_offer_items")
+      .where("tradeOfferId", "==", offerId);
+
+    const itemsSnap = await tx.get(itemsQuery);
+
+    if (itemsSnap.empty) {
+      throw new HttpsError("failed-precondition", "No trade items found for this offer.");
+    }
+
+    const items = itemsSnap.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    })) as Array<any>;
+
+    const targetItem = items.find((item) => item.isTarget === true);
+    const offeredItems = items.filter((item) => item.isTarget !== true);
+
+    if (!targetItem) {
+      throw new HttpsError("failed-precondition", "Target listing not found in trade items.");
+    }
+
+    if (offeredItems.length === 0 && Number(offer.offeredCashAmount || 0) <= 0) {
+      throw new HttpsError("failed-precondition", "Trade must include item or cash.");
+    }
+
+    const targetListingId = String(targetItem.listingId || "");
+    if (!targetListingId) {
+      throw new HttpsError("failed-precondition", "Target listingId missing.");
+    }
+
+    const targetListingRef = db.collection("listings").doc(targetListingId);
+    const targetListingSnap = await tx.get(targetListingRef);
+
+    if (!targetListingSnap.exists) {
+      throw new HttpsError("not-found", "Target listing not found.");
+    }
+
+    const targetListing = targetListingSnap.data() as any;
+
+    if (targetListing.sellerId !== uid) {
+      throw new HttpsError("permission-denied", "Receiver does not own target listing.");
+    }
+
+    if (targetListing.status !== "active") {
+      throw new HttpsError("failed-precondition", "Target listing is not active.");
+    }
+
+    const offeredListingRefs = offeredItems.map((item) =>
+      db.collection("listings").doc(String(item.listingId))
+    );
+
+    const offeredListingSnaps = await Promise.all(
+      offeredListingRefs.map((ref) => tx.get(ref))
+    );
+
+    offeredListingSnaps.forEach((snap, i) => {
+      if (!snap.exists) {
+        throw new HttpsError("not-found", `Offered listing not found: ${offeredItems[i].listingId}`);
+      }
+
+      const listing = snap.data() as any;
+
+      if (listing.sellerId !== offer.senderUserId) {
+        throw new HttpsError(
+          "failed-precondition",
+          `Offered listing owner mismatch: ${offeredItems[i].listingId}`
+        );
+      }
+
+      if (listing.status !== "active") {
+        throw new HttpsError(
+          "failed-precondition",
+          `Offered listing is not active: ${offeredItems[i].listingId}`
+        );
+      }
+    });
+
     tx.update(offerRef, {
       status: "accepted",
+      acceptedAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    // Log history
-    const historyRef = db.collection("trade_status_history").doc();
-    tx.set(historyRef, {
+    tx.set(db.collection("trade_status_history").doc(), {
       offerId,
       oldStatus: "pending",
       newStatus: "accepted",
@@ -348,35 +435,27 @@ export const acceptTradeOffer = onCall(async (request) => {
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    // Lock both products
-    const senderProductRef = db
-      .collection("products")
-      .doc(offer.senderProductId);
-    const receiverProductRef = db
-      .collection("products")
-      .doc(offer.receiverProductId);
-
-    tx.update(senderProductRef, {
+    tx.update(targetListingRef, {
       status: "locked",
       lockedByTradeId: offerId,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    tx.update(receiverProductRef, {
-      status: "locked",
-      lockedByTradeId: offerId,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
+    for (const ref of offeredListingRefs) {
+      tx.update(ref, {
+        status: "locked",
+        lockedByTradeId: offerId,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    }
 
-    // Send notification to sender
-    const notifRef = db.collection("notifications").doc();
-    tx.set(notifRef, {
+    tx.set(db.collection("notifications").doc(), {
       userId: offer.senderUserId,
-      type: "info",
-      title: "Takas Teklifi Kabul Edildi!",
-      message: "Teklifiniz kabul edildi. İlgili ilanlar kilitlendi.",
+      type: "trade",
+      title: "Takas teklifi kabul edildi",
+      message: "Gönderdiğiniz takas teklifi kabul edildi.",
+      tradeOfferId: offerId,
       isRead: false,
-      link: `/trade/offers/${offerId}`,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
   });
@@ -386,107 +465,100 @@ export const acceptTradeOffer = onCall(async (request) => {
 
 export const completeTradeOffer = onCall(async (request) => {
   const uid = request.auth?.uid;
-  if (!uid) throw new HttpsError("unauthenticated", "Authentication required.");
-  const { offerId } = (request.data || {}) as { offerId?: string };
-  if (!offerId || typeof offerId !== "string")
-    throw new HttpsError("invalid-argument", "offerId required");
+  if (!uid) {
+    throw new HttpsError("unauthenticated", "Authentication required.");
+  }
 
-  await db.runTransaction(async (tx: FirebaseFirestore.Transaction) => {
-    const offerRef = db.collection("trade_offers").doc(offerId);
+  const { offerId } = request.data as { offerId?: string };
+  if (!offerId) {
+    throw new HttpsError("invalid-argument", "offerId is required.");
+  }
+
+  const offerRef = db.collection("trade_offers").doc(offerId);
+
+  await db.runTransaction(async (tx) => {
     const offerSnap = await tx.get(offerRef);
-    if (!offerSnap.exists) throw new HttpsError("not-found", "offer not found");
+    if (!offerSnap.exists) {
+      throw new HttpsError("not-found", "Trade offer not found.");
+    }
+
     const offer = offerSnap.data() as any;
 
-    const isSender = uid === offer.senderUserId;
-    const isReceiver = uid === offer.receiverUserId;
-    if (!isSender && !isReceiver)
-      throw new HttpsError("permission-denied", "not participant");
-    if (offer.status !== "accepted")
-      throw new HttpsError("failed-precondition", "offer not accepted");
+    const allowedUsers = [offer.senderUserId, offer.receiverUserId];
+    if (!allowedUsers.includes(uid)) {
+      throw new HttpsError("permission-denied", "You are not part of this trade.");
+    }
 
-    const update: any = {};
-    if (isSender) update.senderConfirmed = true;
-    else update.receiverConfirmed = true;
+    if (offer.status !== "accepted") {
+      throw new HttpsError("failed-precondition", "Only accepted trades can be completed.");
+    }
+
+    const itemsQuery = db
+      .collection("trade_offer_items")
+      .where("tradeOfferId", "==", offerId);
+
+    const itemsSnap = await tx.get(itemsQuery);
+    if (itemsSnap.empty) {
+      throw new HttpsError("failed-precondition", "No trade items found.");
+    }
+
+    const items = itemsSnap.docs.map((doc) => doc.data() as any);
+    const listingIds = items
+      .map((item) => String(item.listingId || ""))
+      .filter(Boolean);
+
+    if (listingIds.length === 0) {
+      throw new HttpsError("failed-precondition", "No listing ids found.");
+    }
+
+    const listingRefs = listingIds.map((id) => db.collection("listings").doc(id));
+    const listingSnaps = await Promise.all(listingRefs.map((ref) => tx.get(ref)));
+
+    listingSnaps.forEach((snap, i) => {
+      if (!snap.exists) {
+        throw new HttpsError("not-found", `Listing not found: ${listingIds[i]}`);
+      }
+    });
 
     tx.update(offerRef, {
-      ...update,
+      status: "completed",
+      completedAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    // Check if this action makes both confirmed
-    const senderConfirmed = isSender ? true : offer.senderConfirmed;
-    const receiverConfirmed = isReceiver ? true : offer.receiverConfirmed;
+    tx.set(db.collection("trade_status_history").doc(), {
+      offerId,
+      oldStatus: "accepted",
+      newStatus: "completed",
+      changedBy: uid,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
 
-    if (senderConfirmed && receiverConfirmed) {
-      tx.update(offerRef, {
-        status: "completed",
-        completedAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-
-      // Release cash if any
-      if (offer.offeredCashAmount > 0) {
-        const receiverRef = db.collection("users").doc(offer.receiverUserId);
-        tx.update(receiverRef, {
-          balance: admin.firestore.FieldValue.increment(
-            offer.offeredCashAmount,
-          ),
-        });
-
-        const txRef = db.collection("transactions").doc();
-        tx.set(txRef, {
-          userId: offer.receiverUserId,
-          type: "trade_income",
-          amount: offer.offeredCashAmount,
-          status: "completed",
-          relatedId: offerId,
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-      }
-
-      // Mark items as sold
-      const senderProductRef = db
-        .collection("products")
-        .doc(offer.senderProductId);
-      const receiverProductRef = db
-        .collection("products")
-        .doc(offer.receiverProductId);
-
-      tx.update(senderProductRef, { status: "sold" });
-      tx.update(receiverProductRef, { status: "sold" });
-
-      // Notify both parties
-      const notifSenderRef = db.collection("notifications").doc();
-      tx.set(notifSenderRef, {
-        userId: offer.senderUserId,
-        type: "success",
-        title: "Takas Tamamlandı!",
-        message: "Takas işlemi başarıyla tamamlandı.",
-        isRead: false,
-        link: `/trade/offers/${offerId}`,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-
-      const notifReceiverRef = db.collection("notifications").doc();
-      tx.set(notifReceiverRef, {
-        userId: offer.receiverUserId,
-        type: "success",
-        title: "Takas Tamamlandı!",
-        message: "Takas işlemi başarıyla tamamlandı.",
-        isRead: false,
-        link: `/trade/offers/${offerId}`,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    for (const ref of listingRefs) {
+      tx.update(ref, {
+        status: "sold",
+        lockedByTradeId: admin.firestore.FieldValue.delete(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
     }
 
-    // Log history
-    const historyRef = db.collection("trade_status_history").doc();
-    tx.set(historyRef, {
+    tx.set(db.collection("notifications").doc(), {
+      userId: offer.senderUserId,
+      type: "trade",
+      title: "Takas tamamlandı",
+      message: "Takas işlemi tamamlandı.",
       tradeOfferId: offerId,
-      oldStatus: offer.status,
-      newStatus:
-        senderConfirmed && receiverConfirmed ? "completed" : offer.status,
-      changedBy: uid,
-      note: isSender ? "Gönderici onayladı" : "Alıcı onayladı",
+      isRead: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    tx.set(db.collection("notifications").doc(), {
+      userId: offer.receiverUserId,
+      type: "trade",
+      title: "Takas tamamlandı",
+      message: "Takas işlemi tamamlandı.",
+      tradeOfferId: offerId,
+      isRead: false,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
   });

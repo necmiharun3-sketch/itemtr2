@@ -7,7 +7,7 @@ dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
 const authFile = path.join(process.cwd(), 'playwright', '.auth', 'user.json');
 const hasE2EAuth = Boolean(
-  process.env.E2E_TEST_EMAIL?.trim() && process.env.E2E_TEST_PASSWORD
+  process.env.TEST_USER_EMAIL?.trim() && process.env.TEST_USER_PASSWORD
 );
 
 const projects: NonNullable<Parameters<typeof defineConfig>[0]['projects']> = [

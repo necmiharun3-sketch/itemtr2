@@ -5,10 +5,10 @@ import path from 'path';
 const authFile = path.join(process.cwd(), 'playwright', '.auth', 'user.json');
 
 setup('authenticate', async ({ page }) => {
-  const email = process.env.E2E_TEST_EMAIL?.trim();
-  const password = process.env.E2E_TEST_PASSWORD;
+  const email = process.env.TEST_USER_EMAIL?.trim();
+  const password = process.env.TEST_USER_PASSWORD;
   if (!email || !password) {
-    throw new Error('E2E_TEST_EMAIL and E2E_TEST_PASSWORD must be set for authenticated E2E.');
+    throw new Error('TEST_USER_EMAIL and TEST_USER_PASSWORD must be set for authenticated E2E.');
   }
 
   fs.mkdirSync(path.dirname(authFile), { recursive: true });

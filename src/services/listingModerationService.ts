@@ -295,7 +295,7 @@ export async function analyzeListingQuality(listing: {
       const min = Math.min(...prices);
       const max = Math.max(...prices);
       const ratio = listing.price / avg;
-      let status: SmartListingAnalysis['priceComparison']['status'] = 'avg';
+      let status: NonNullable<SmartListingAnalysis['priceComparison']>['status'] = 'avg';
       if (ratio < 0.5) { status = 'very_low'; priceScore = 50; suggestions.push('Fiyatınız piyasanın çok altında — gerçek fiyat mı?'); }
       else if (ratio < 0.8) { status = 'below_avg'; priceScore = 90; suggestions.push('Rekabetçi fiyat! Hızlı satış yapabilirsiniz'); }
       else if (ratio <= 1.2) { status = 'avg'; priceScore = 80; }

@@ -4,16 +4,20 @@ export default function CategoryPills() {
   const location = useLocation();
   const navigate = useNavigate();
 
-  const pills = [
-    { name: 'En Yeniler', path: '/', type: 'link' as const },
-    { name: 'İlan Pazarı', path: '/ilan-pazari', type: 'link' as const },
-    { name: 'Valorant', path: '/ilan-pazari', type: 'search' as const, q: 'Valorant' },
-    { name: 'PUBG Mobile', path: '/ilan-pazari', type: 'search' as const, q: 'PUBG' },
-    { name: 'Roblox', path: '/roblox', type: 'link' as const },
-    { name: 'League of Legends', path: '/ilan-pazari', type: 'search' as const, q: 'League of Legends' },
-    { name: 'Counter Strike 2', path: '/ilan-pazari', type: 'search' as const, q: 'CS2' },
-    { name: 'Mobile Legends', path: '/ilan-pazari', type: 'search' as const, q: 'Mobile Legends' },
-    { name: 'CD-Key', path: '/cd-key', type: 'link' as const },
+  type Pill = 
+    | { name: string; path: string; type: 'link' }
+    | { name: string; path: string; type: 'search'; q: string };
+
+  const pills: Pill[] = [
+    { name: 'En Yeniler', path: '/', type: 'link' },
+    { name: 'İlan Pazarı', path: '/ilan-pazari', type: 'link' },
+    { name: 'Valorant', path: '/ilan-pazari', type: 'search', q: 'Valorant' },
+    { name: 'PUBG Mobile', path: '/ilan-pazari', type: 'search', q: 'PUBG' },
+    { name: 'Roblox', path: '/roblox', type: 'link' },
+    { name: 'League of Legends', path: '/ilan-pazari', type: 'search', q: 'League of Legends' },
+    { name: 'Counter Strike 2', path: '/ilan-pazari', type: 'search', q: 'CS2' },
+    { name: 'Mobile Legends', path: '/ilan-pazari', type: 'search', q: 'Mobile Legends' },
+    { name: 'CD-Key', path: '/cd-key', type: 'link' },
   ];
 
   return (

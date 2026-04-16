@@ -19,7 +19,10 @@ function stringifyError(err: unknown) {
 }
 
 export default class AppErrorBoundary extends React.Component<Props, State> {
-  state: State = { hasError: false };
+  constructor(props: Props) {
+    super(props);
+    this.state = { hasError: false };
+  }
 
   static getDerivedStateFromError(error: unknown) {
     return { hasError: true, error };

@@ -2,7 +2,17 @@ import { Info, ChevronRight, TrendingUp, Clock, Star } from "lucide-react";
 import ListingCard from "./ListingCard";
 import { Link } from "react-router-dom";
 
-const listings = [
+interface ListingItem {
+  title: string;
+  category: string;
+  seller: string;
+  price: string;
+  oldPrice?: string;
+  imageColor: string;
+  emoji: string;
+}
+
+const listings: ListingItem[] = [
   { title: "⚡2021 Kurulum⭐ Bilgileri Değişen Discord Hesap", category: "Discord", seller: "GuvenilirMarket", price: "39,90 ₺", oldPrice: "120,00 ₺", imageColor: "bg-gradient-to-br from-indigo-600/40 to-violet-700/30", emoji: "💬" },
   { title: "✅715✅ (500) Robux KOMİSYON BİZDEN", category: "Roblox", seller: "RedlyStore", price: "199,90 ₺", oldPrice: "294,90 ₺", imageColor: "bg-gradient-to-br from-green-600/40 to-emerald-700/30", emoji: "🎮" },
   { title: "⭐[GARANTİLİ] INSTAGRAM 1000 TAKİPÇİ⭐", category: "Instagram", seller: "Eson", price: "30,00 ₺", oldPrice: "99,90 ₺", imageColor: "bg-gradient-to-br from-pink-600/40 to-rose-700/30", emoji: "📸" },
@@ -71,7 +81,16 @@ const FeaturedListings = () => {
       {/* Grid */}
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
         {listings.map((listing, i) => (
-          <ListingCard key={i} {...listing} />
+          <ListingCard 
+            key={i} 
+            title={listing.title}
+            category={listing.category}
+            seller={listing.seller}
+            price={listing.price}
+            oldPrice={listing.oldPrice}
+            imageColor={listing.imageColor}
+            emoji={listing.emoji}
+          />
         ))}
       </div>
 

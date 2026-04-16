@@ -3,7 +3,7 @@ import {
   CheckCircle2, AlertCircle, X, HelpCircle, BookOpen, Shield, CreditCard,
   Package, User, Search, Mail, Phone, MessageCircle
 } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';

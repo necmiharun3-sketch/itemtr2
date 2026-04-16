@@ -25,7 +25,7 @@ import {
   HelpCircle,
   LogOut,
 } from "lucide-react";
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { Navigate, Link } from "react-router-dom";
 import { db, storage } from "../firebase";

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
@@ -39,7 +39,7 @@ export default function TradeOfferDetail() {
           return;
         }
 
-        const offerData = { id: offerSnap.id, ...offerSnap.data() };
+        const offerData: any = { id: offerSnap.id, ...offerSnap.data() };
         
         // Check permissions
         if (offerData.senderUserId !== user.uid && offerData.receiverUserId !== user.uid) {
@@ -53,7 +53,7 @@ export default function TradeOfferDetail() {
         // Fetch items
         const itemsQ = query(collection(db, 'trade_offer_items'), where('tradeOfferId', '==', id));
         const itemsSnap = await getDocs(itemsQ);
-        const items = itemsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        const items: any[] = itemsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
         const target = items.find(i => i.isTarget);
         const offered = items.filter(i => !i.isTarget);

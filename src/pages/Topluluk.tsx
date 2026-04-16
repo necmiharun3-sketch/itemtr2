@@ -5,7 +5,7 @@ import {
   Award, Zap, Eye, Filter, ChevronDown, Check, AlertCircle, FileText,
   AlertTriangle, Ban
 } from 'lucide-react';
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
 import { Timestamp, collection, addDoc, query, orderBy, onSnapshot, doc, updateDoc, increment, arrayUnion, arrayRemove, deleteDoc, writeBatch, getDoc, where, limit, getDocs } from 'firebase/firestore';

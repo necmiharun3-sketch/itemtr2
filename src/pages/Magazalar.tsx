@@ -1,5 +1,5 @@
 import { Star, ShieldCheck, Search, Award, Store, TrendingUp, Clock, Users, ChevronRight, ExternalLink } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { db } from '../firebase';
 import { addDoc, collection, deleteDoc, doc, getDocs, limit, orderBy, query, where, Timestamp } from 'firebase/firestore';
